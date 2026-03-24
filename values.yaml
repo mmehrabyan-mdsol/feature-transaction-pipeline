@@ -1,0 +1,34 @@
+runLauncher:
+  type: K8sRunLauncher
+  config:
+    k8sRunLauncher:
+      runK8sConfig:
+        containerConfig:
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "4000m"
+              memory: "16Gi"
+
+dagster-user-deployments:
+  enabled: true
+  deployments:
+    - name: feature-pipeline
+      image:
+        repository: feature-pipeline
+        tag: 13
+        pullPolicy: IfNotPresent
+      port: 4003
+      dagsterApiGrpcArgs:
+        - "-h"
+        - "0.0.0.0"
+        - "-p"
+        - "4003"
+        - "-m"
+        - "feature_transaction_pipeline.definitions"
+      env:
+        - name: BASE_DATA_PATH
+          value: "/feature-transaction-pipeline/data"
+
