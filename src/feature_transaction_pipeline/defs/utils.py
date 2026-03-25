@@ -1,11 +1,11 @@
 from huggingface_hub import hf_hub_download
 import polars as pl
-import datetime as dt
 import tarfile
 from .config import settings
 
+
 # Download the tar.gz into project directory
-def hf_hub_download_gz(context, path=settings.BASE_DATA_PATH):
+def hf_hub_download_gz(context, path=settings.BASE_PATH):
     try:
         archive_path = hf_hub_download(
             repo_id="ai-lab/MBD-mini",
@@ -24,54 +24,66 @@ def row_count(df: pl.LazyFrame) -> int:
     return  df.select(pl.len()).collect().item()
 
 
-def validate_columns(df: pl.LazyFrame | pl.DataFrame, required: list[str]) -> None:
 
-    if isinstance(df, pl.LazyFrame):
-        column_names = df.collect_schema().names()
-    else:
-        column_names = df.columns
-
+def validate_columns(df: pl.LazyFrame, required: list[str]) -> None:
+    column_names = df.collect_schema().names()
     missing = [col for col in required if col not in column_names]
-
     if missing:
         raise ValueError(f"Missing required columns: {missing}")
 
 
-def _load_trx_data(context) -> pl.LazyFrame:
-    path = "data/detail/trx/fold=*/**/*.parquet"
-    # path = os.path.join(settings.BASE_DATA_PATH,"/trx/fold=*/**/*.parquet")
-    # path = f"{settings.BASE_DATA_PATH}/detail/trx/fold=*/**/*.parquet"
-        # Lazy scan parquet files
-    df = pl.scan_parquet(path)
-    # This will ensure event_time is datetime and will add a normalized date column
-    df = df.with_columns([
+def load_parquet() -> pl.LazyFrame:
+    """Creates a unified LazyFrame from the parquet files."""
+
+    files_pattern = f"{settings.BASE_DATA_PATH}/detail/trx/fold=*/**/*.parquet"
+    lf = pl.scan_parquet(files_pattern)
+
+    # Cast and normalize date early in the lazy plan
+    lf = lf.with_columns([
+        pl.col("event_time").cast(pl.Datetime).alias("event_time"),
         pl.col("event_time").cast(pl.Datetime).dt.date().alias("date")
     ])
-    # Validate schema
-    validate_columns(df, ["client_id", "amount", "event_type", "date"])
-    context.log.info(f"Loaded dataset with {row_count(df)} rows")
-    return df
+
+    validate_columns(lf, ["client_id", "amount", "event_type", "date", "event_time"])
+    return lf
 
 
+def compute_features_on_chunk(lf: pl.LazyFrame, start_date, end_date) -> pl.LazyFrame:
+    """
+    Unified compute logic for both Daily and Backfill modes.
+    Returns a LazyFrame to be collected by the parent asset.
+    """
 
-def compute_daily_features(context, df: pl.LazyFrame, date: dt.date) -> pl.DataFrame:
-    """Compute daily features per client"""
-    daily_df = df.filter(pl.col("date") == date)
-    result = daily_df.group_by("client_id").agg([
-        pl.col("amount").mean().alias("mean_amount"),
-        pl.col("amount").mean().over("event_type").alias("mean_amount_by_event")
-    ]).collect()
-    context.log.info(f"Computed daily features for {date}, {len(result)} rows")
-    return result
+    processed_lf = (
+        lf.sort(["client_id", "event_time"])
 
-def compute_backfill_features(context, df: pl.LazyFrame) -> pl.DataFrame:
-    """Compute backfill features with rolling 30-day window"""
-    df = df.sort("date")
-    result = df.group_by("client_id").agg([
-        pl.col("amount").mean().alias("mean_amount_daily"),
-        pl.col("amount").rolling_mean(window_size=30, min_samples=1).over("client_id").alias("mean_amount_30d")
-    ]).collect()
-    context.log.info(f"Computed backfill features, {len(result)} rows")
-    return result
+        # Compute 30-day rolling mean per client
+        .with_columns([
+            pl.col("amount")
+            .rolling_mean(window_size=30, min_samples=1)
+            .over("client_id")
+            .alias("mean_amount_30d"),
 
+            # Compute mean per event type per client
+            pl.col("amount")
+            .mean()
+            .over(["client_id", "event_type"])
+            .alias("mean_amount_by_event")
+        ])
 
+        # Filter for the specific range requested by Dagster
+        .filter(
+            (pl.col("date") >= start_date) &
+            (pl.col("date") <= end_date)
+        )
+
+        #  Aggregate to daily level
+        .group_by(["client_id", "date"])
+        .agg([
+            pl.col("amount").mean().alias("daily_mean_amount"),
+            pl.col("mean_amount_30d").last(),
+            pl.col("mean_amount_by_event").mean()
+        ])
+    )
+
+    return processed_lf

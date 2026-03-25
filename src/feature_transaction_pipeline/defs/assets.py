@@ -1,68 +1,53 @@
-import datetime as dt
-import polars as pl
-from dagster import asset, DailyPartitionsDefinition, BackfillPolicy
-from .utils import _load_trx_data,compute_daily_features,compute_backfill_features,row_count
+# assets/.py
+
+from dagster import asset, DailyPartitionsDefinition, BackfillPolicy,AssetExecutionContext
+from datetime import datetime, timedelta
+from .utils import load_parquet
+from .utils import compute_features_on_chunk
 from .config import settings
-import os
 
-daily_partitions = DailyPartitionsDefinition(start_date=settings.DAILY_PARTITIONS_START_DATE)
-
-
-@asset
-def load_trx_data(context) -> pl.LazyFrame:
-    df = _load_trx_data(context)
-    if row_count(df) == 0:
-        raise ValueError("Loaded dataset is empty!")
-    return df
+import polars as pl
+daily_partitions = DailyPartitionsDefinition(
+    start_date=settings.DAILY_PARTITIONS_START_DATE
+)
 
 
-@asset(partitions_def=daily_partitions, backfill_policy=BackfillPolicy.single_run())
-def daily_features(context, load_trx_data: pl.LazyFrame) -> pl.DataFrame:
-    """
-    Computes daily features across the partition range.
-    Returns a concatenated DataFrame of all daily results.
-    """
-    # Dagster range is inclusive start, exclusive end
-    start = dt.date.fromisoformat(context.partition_key_range.start)
-    end = dt.date.fromisoformat(context.partition_key_range.end)
+@asset(
+    partitions_def=daily_partitions,
+    backfill_policy=BackfillPolicy.single_run(),
+)
+def transaction_features(context: AssetExecutionContext):
+    # --- LOGIC TO JOIN DAILY AND BACKFILL MODES ---
 
-    # Generate list of days to process
-    partition_dates = [start + dt.timedelta(days=i) for i in range((end - start).days)]
+    try:
+        partition_range = context.partition_key_range
+        start_date = datetime.strptime(partition_range.start, "%Y-%m-%d").date()
+        end_date = datetime.strptime(partition_range.end, "%Y-%m-%d").date()
+    except Exception as e:
+        # Fallback for unexpected execution contexts
+        start_date = datetime.strptime(context.partition_key, "%Y-%m-%d").date()
+        end_date = start_date
+        context.log.info(f"Fallback Exception {e}")
 
-    # Prepare output directory once
-    out_dir = os.path.join(settings.BASE_DATA_PATH, settings.DAILY_OUTPUT_PATH)
-    os.makedirs(out_dir, exist_ok=True)
+    context.log.info(f"EXECUTION MODE: {'Daily' if start_date == end_date else 'Backfill'}")
+    context.log.info(f"Target Range: {start_date} -> {end_date}")
 
-    results = []
+    # --- MEMORY EFFICIENT CHUNKING ---
 
-    for p_date in partition_dates:
-        df_result = compute_daily_features(context, load_trx_data, p_date)
+    base_lf = load_parquet()
+    # used a 10-bucket split for even tighter memory control during big backfills
+    num_chunks = settings.NUM_CHUNKS
+    chunk_results = []
 
-        if df_result.height == 0:
-            context.log.warning(f"No data for {p_date}, skipping.")
-            continue
+    for i in range(num_chunks):
+        # 1. Filter by User Hash (Processes 10% of users at a time)
+        # This ensures ALL history for a user is in this chunk for the rolling mean
+        user_group_lf = base_lf.filter(pl.col("client_id").hash() % num_chunks == i)
+        context.log.info(f"Executing chunk {i}")
+        # 2. Apply the rolling logic
+        # Polars handles the 'window' internally within this user group
+        processed_lf = compute_features_on_chunk(user_group_lf, start_date, end_date)
 
-        output_path = f"{out_dir}/daily_features_{p_date}.parquet"
-        df_result.write_parquet(output_path, compression="snappy")
-        context.log.info(f"Daily Features successfully saved: {output_path}")
+        chunk_results.append(processed_lf)
 
-        results.append(df_result)
-
-    if results:
-        return pl.concat(results)
-    else:
-        context.log.warning("No daily features computed for any partition.")
-        return pl.DataFrame()
-
-
-@asset
-def backfill_features(context, load_trx_data: pl.LazyFrame) -> pl.DataFrame:
-
-    df_result = compute_backfill_features(context, load_trx_data)
-    #for saving locally
-    out_dir = os.path.join(settings.BASE_DATA_PATH, settings.BACKFILL_OUTPUT_PATH)
-    os.makedirs(out_dir, exist_ok=True)
-    output_path = f"{out_dir}/backfill_features.parquet"
-    df_result.write_parquet(output_path, compression="snappy")
-    context.log.info(f"Backfill successfully saved: {output_path}")
-    return df_result
+    return pl.concat(chunk_results).collect()
