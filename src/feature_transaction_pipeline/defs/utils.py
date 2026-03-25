@@ -5,7 +5,7 @@ from .config import settings
 
 
 # Download the tar.gz into project directory
-def hf_hub_download_gz(context, path=settings.BASE_PATH):
+def hf_hub_download_gz(context, path=settings.BASE_DATA_PATH):
     try:
         archive_path = hf_hub_download(
             repo_id="ai-lab/MBD-mini",
