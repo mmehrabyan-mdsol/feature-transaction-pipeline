@@ -48,7 +48,7 @@ def load_parquet() -> pl.LazyFrame:
     return lf
 
 
-def compute_features_on_chunk(lf: pl.LazyFrame, start_date, end_date) -> pl.LazyFrame:
+def compute_features(lf: pl.LazyFrame, start_date, end_date) -> pl.LazyFrame:
     """
     Unified compute logic for both Daily and Backfill modes.
     Returns a LazyFrame to be collected by the parent asset.

@@ -3,7 +3,7 @@
 from dagster import asset, DailyPartitionsDefinition, BackfillPolicy,AssetExecutionContext
 from datetime import datetime, timedelta
 from .utils import load_parquet
-from .utils import compute_features_on_chunk
+from .utils import compute_features
 from .config import settings
 
 import polars as pl
@@ -46,7 +46,7 @@ def transaction_features(context: AssetExecutionContext):
         context.log.info(f"Executing chunk {i}")
         # 2. Apply the rolling logic
         # Polars handles the 'window' internally within this user group
-        processed_lf = compute_features_on_chunk(user_group_lf, start_date, end_date)
+        processed_lf = compute_features(user_group_lf, start_date, end_date)
 
         chunk_results.append(processed_lf)
 
