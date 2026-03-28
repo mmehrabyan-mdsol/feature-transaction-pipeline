@@ -6,7 +6,8 @@ class Settings(BaseSettings):
         env_file=".env", env_ignore_empty=True, extra="ignore"
     )
     # Data paths
-    BASE_DATA_PATH: str = "/home/user/Desktop/git/feature-transaction-pipeline/data"
+    # BASE_DATA_PATH: str = "/home/user/Desktop/git/feature-transaction-pipeline/data"
+    BASE_DATA_PATH: str="/home/user/Desktop/git/feature-transaction-pipeline/data"
     NUM_CHUNKS: int =10
     OUTPUT_DIR: str = "data/output/features/"
     # DAILY_OUTPUT_PATH: str = "output/daily"

@@ -40,7 +40,7 @@ def transaction_features(
         end_date = start_date
 
     context.log.info(f"Processing from {start_date} to {end_date}")
-    engine.run_pipeline(start_date, end_date, context.log)
+    engine.compute_features(start_date, end_date, context.log)
     return MaterializeResult(
         metadata={
             "status": "success",
