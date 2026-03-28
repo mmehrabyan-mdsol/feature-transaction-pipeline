@@ -5,6 +5,7 @@ __pycache__/
 Report.md
 data
 # C extensions
+.idea/
 *.so
 .venv
 .dg
