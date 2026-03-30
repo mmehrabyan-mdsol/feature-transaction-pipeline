@@ -35,9 +35,13 @@ def transaction_features(
         pk_range = context.partition_key_range
         start_date = datetime.strptime(pk_range.start, "%Y-%m-%d").date()
         end_date = datetime.strptime(pk_range.end, "%Y-%m-%d").date()
-    except Exception:
+    except Exception as e:
         start_date = datetime.strptime(context.partition_key, "%Y-%m-%d").date()
         end_date = start_date
+        context.log.info(f"Fallback Exception {e}")
+
+    context.log.info(f"EXECUTION MODE: {'Daily' if start_date == end_date else 'Backfill'}")
+    context.log.info(f"Target Range: {start_date} -> {end_date}")
 
     context.log.info(f"Processing from {start_date} to {end_date}")
     engine.compute_features(start_date, end_date, context.log)
