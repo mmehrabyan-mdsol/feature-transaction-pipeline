@@ -1,16 +1,6 @@
-import pytest
 import polars as pl
 import os
-from datetime import date
-from dagster import build_asset_context, PartitionKeyRange
-from src.feature_transaction_pipeline.defs.assets import transaction_features
-from src.feature_transaction_pipeline.defs.resources import FeatureEngine
-
-import pytest
-import polars as pl
-import os
-from datetime import date
-from dagster import build_asset_context, PartitionKeyRange
+from dagster import build_asset_context
 from src.feature_transaction_pipeline.defs.assets import transaction_features
 from src.feature_transaction_pipeline.defs.resources import FeatureEngine
 
@@ -18,9 +8,9 @@ from src.feature_transaction_pipeline.defs.resources import FeatureEngine
 def test_transaction_features_logic(tmp_path):
     # 1. SETUP: Create physical mock data in a temp directory
     # FeatureEngine scans files, so we must provide actual files for a true integration test.
-    base_dir = tmp_path / "input"
-    out_dir = tmp_path / "output"
-    os.makedirs(base_dir / "detail/trx/fold=0")
+    base_dir = tmp_path/"input"
+    out_dir = tmp_path/"output"
+    os.makedirs(base_dir/"detail/trx/fold=0",exist_ok=True)
     os.makedirs(out_dir)
 
     mock_df = pl.DataFrame({
@@ -57,7 +47,6 @@ def test_transaction_features_logic(tmp_path):
     assert result.metadata["status"] == "success"
 
     # Read back the written parquet to verify calculations
-    # Note: Path follows your target_dir logic: date=2025-01-03-2025-01-03
     output_path = os.path.join(out_dir, "date=2025-01-03-2025-01-03", "part_0.parquet")
     actual_df = pl.read_parquet(output_path)
 
